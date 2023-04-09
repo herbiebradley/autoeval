@@ -127,3 +127,16 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Project dirs
+.vscode
+checkpoints/
+logs/
+archive/
+data/
+*.out
+outputs
+
+# generated dot files and tree graphs
+.gv
+.png
