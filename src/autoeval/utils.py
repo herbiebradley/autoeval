@@ -10,7 +10,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from autoeval.configs import ModelConfig
 
 
-def set_seed(seed=None, deterministic=True) -> int:
+def set_seed(seed=None, deterministic=False) -> int:
     if seed is None:
         seed = np.random.default_rng().integers(2**32 - 1)
     random.seed(seed)
@@ -79,44 +79,3 @@ def model_setup(cfg: ModelConfig, device=None):
     else:
         model = AutoModelForCausalLM.from_pretrained(cfg.model_name).to(device)
     return model, tokenizer, device
-
-
-def sample(
-    batch,
-    cfg: ModelConfig,
-    model,
-    tokenizer,
-    decode: bool = True,
-    starting_idx: Optional[int] = None,
-    num_return_sequences: Optional[int] = None,
-    **kwargs,
-) -> list[str]:
-    """Run a model on a batch of contexts for a particular task."""
-    if num_return_sequences is None:
-        num_return_sequences = cfg.batch_size
-    device = kwargs.get("device", torch.device("cuda"))
-    temperature = kwargs.get("temperature", cfg.temperature)
-    top_p = kwargs.get("top_p", cfg.top_p)
-    gen_max_len = kwargs.get("gen_max_len", cfg.gen_max_len)
-    input_ids_len = batch["input_ids"].shape[1]
-
-    if starting_idx is None:
-        starting_idx = input_ids_len
-    with torch.inference_mode():
-        batch = batch.to(device)
-        tokens = model.generate(
-            **batch,
-            do_sample=True,
-            num_return_sequences=num_return_sequences,
-            temperature=temperature,
-            max_new_tokens=gen_max_len,
-            top_p=top_p,
-            pad_token_id=tokenizer.pad_token_id,
-            use_cache=True,
-            **kwargs,
-        )
-        if decode:
-            text: list[str] = tokenizer.batch_decode(tokens[:, starting_idx:, ...])
-            return text
-        else:
-            return tokens[:, starting_idx:, ...]

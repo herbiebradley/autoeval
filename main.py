@@ -13,10 +13,10 @@ from autoeval.constants import SRC_PATH
     version_base="1.2",
 )
 def main(config):
-    print("----------------- Config ---------------")
-    print(OmegaConf.to_yaml(config))
-    print("-----------------  End -----------------")
     config = ModelConfig(**config)
+    print("----------------- Config ---------------")
+    print(OmegaConf.to_yaml(config.dict()))
+    print("-----------------  End -----------------")
     print(config)
     persona = PersonaStatement(
         input_variables=["entity", "description", "preamble"],
@@ -24,18 +24,25 @@ def main(config):
     )
     llm = get_model(config=config)
     chain = PersonaStatementChain(llm=llm, prompt=persona)
+    # TODO: wrapper around chain that takes n (number of generations per prompt?)
     result = chain.apply(
         [
             {
                 "preamble": config.preamble,
                 "entity": config.entity,
                 "description": config.description,
-            }
+            },
+            {
+                "preamble": config.preamble,
+                "entity": config.entity,
+                "description": config.description,
+            },
         ]
     )
     print(len(result))
     for i in result:
         print(i["text"])
+        print("-----------------")
 
 
 if __name__ == "__main__":

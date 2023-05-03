@@ -8,6 +8,9 @@ class ModelConfig(BaseModel):
     gpus: int
     seed: Optional[int]
     deterministic: bool
+    # Sampling parameters
+    do_sample: bool = True
+    num_return_sequences: int
     top_p: float
     temperature: float
     gen_max_len: int
@@ -17,3 +20,4 @@ class ModelConfig(BaseModel):
     description: str
     preamble: str
     entity: str
+    logits_only: bool

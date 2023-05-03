@@ -7,8 +7,11 @@ from langchain.chains import LLMChain
 from langchain.chains.base import Chain
 from pydantic import validator
 import os
-from autoeval.utils import sample, model_setup, truncate
+from autoeval.utils import model_setup, truncate
 from autoeval.configs import ModelConfig
+from transformers import BatchEncoding
+import torch
+from torch.nn.functional import softmax
 
 
 class PersonaStatement(StringPromptTemplate):
@@ -99,14 +102,14 @@ class HuggingFaceLLM(LLM):
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         self.model, self.tokenizer, self.device = model_setup(self.config)
 
-    def _call(self, prompt: str, stop: Optional[list[str]] = None) -> str:
-        """Run the LLM on the given prompt and input."""
-        raise NotImplementedError
-
     @property
     def _llm_type(self) -> str:
         """Return type of llm."""
         return "huggingface"
+
+    def _call(self, prompt: str, stop: Optional[list[str]] = None) -> str:
+        """Run the LLM on the given prompt and input."""
+        raise NotImplementedError
 
     def _generate(
         self, prompts: list[str], stop: Optional[list[str]] = None
@@ -117,27 +120,55 @@ class HuggingFaceLLM(LLM):
         # Get the total number of batches
         total_batches = (len(prompts) + batch_size - 1) // batch_size
         print("Total batches: ", total_batches)
-        # TODO: encode before loop, Use num_return sequences for this
+        print(prompts[0])
+        encodings = self.tokenizer(
+            prompts,
+            truncation=True,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.device)
         for i in range(total_batches):
             start_index = i * batch_size
             end_index = min((i + 1) * batch_size, len(prompts))
-            batched_prompts = prompts[start_index:end_index]
-            encodings = self.tokenizer(
-                batched_prompts,
-                truncation=True,
-                padding=True,
-                return_tensors="pt",
-            )
-            texts = sample(
-                encodings,
-                cfg=self.config,
-                model=self.model,
-                tokenizer=self.tokenizer,
-                num_return_sequences=1,
-            )
-            # results: list[str] = list(map(truncate, texts))
-            generations.append([Generation(text=text) for text in texts])
-        # TODO: return logprobs
+            batched_prompts = BatchEncoding(
+                {
+                    "input_ids": encodings["input_ids"][start_index:end_index],
+                    "attention_mask": encodings["attention_mask"][
+                        start_index:end_index
+                    ],
+                }
+            ).to(self.device)
+            if self.config.logits_only:
+                with torch.inference_mode():
+                    outputs = self.model(**batched_prompts)
+                    if i == 0:
+                        logits = outputs.logits
+                    else:
+                        logits = torch.cat((logits, outputs.logits), dim=0)
+                generations.append(
+                    [
+                        Generation(text="", generation_info={"logits": logits})
+                        for logits in logits
+                    ]
+                )
+            else:
+                input_ids_len = batched_prompts["input_ids"].shape[1]
+                with torch.inference_mode():
+                    tokens = self.model.generate(
+                        **batched_prompts,
+                        do_sample=self.config.do_sample,
+                        num_return_sequences=self.config.num_return_sequences,
+                        temperature=self.config.temperature,
+                        max_new_tokens=self.config.gen_max_len,
+                        top_p=self.config.top_p,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        # **kwargs,
+                    )
+                    texts: list[str] = self.tokenizer.batch_decode(
+                        tokens[:, input_ids_len:, ...]
+                    )
+                # TODO: nested list for each different input?
+                generations.append([Generation(text=text) for text in texts])
         return LLMResult(generations=generations)
 
 
@@ -156,17 +187,32 @@ def get_model(config: ModelConfig):
         return OpenAI(**cfg)
 
 
+# TODO: AutoCritChain wrapper class around LLM chain?
+# Potentially multiple since they are differentiated by filtering techniques?
+# Write out different types of single-prompt chains we want?
 class PersonaStatementChain(LLMChain):
     num_statements: int = 3
 
+    # TODO: k-shot prompts
     def create_outputs(self, response: LLMResult) -> list[dict[str, str]]:
         """Create outputs from response."""
-        # TODO: regex here to filter lines
-        return [
-            {self.output_key: gen.text}
-            for generation in response.generations
-            for gen in generation
-        ]
+        for generation in response.generations:
+            # TODO: regex here to filter lines
+            pass
+        # TODO: figure out how these configs should work?
+        if self.llm.config.logits_only:
+            # TODO: If logits, batch? Move to agreement filter?
+            return [
+                {self.output_key: gen.text, "generation_info": gen.generation_info}
+                for generation in response.generations
+                for gen in generation
+            ]
+        else:
+            return [
+                {self.output_key: gen.text}
+                for generation in response.generations
+                for gen in generation
+            ]
 
     @property
     def _chain_type(self) -> str:
