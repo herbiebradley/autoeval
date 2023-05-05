@@ -12,6 +12,7 @@ from autoeval.configs import ModelConfig
 from transformers import BatchEncoding
 import torch
 from torch.nn.functional import softmax
+from collections import defaultdict
 
 
 class PersonaStatement(StringPromptTemplate):
@@ -115,18 +116,18 @@ class HuggingFaceLLM(LLM):
         self, prompts: list[str], stop: Optional[list[str]] = None
     ) -> LLMResult:
         """Run the LLM on the given prompt and input."""
-        generations = []
         batch_size = self.config.batch_size
-        # Get the total number of batches
         total_batches = (len(prompts) + batch_size - 1) // batch_size
-        print("Total batches: ", total_batches)
-        print(prompts[0])
+
         encodings = self.tokenizer(
             prompts,
             truncation=True,
             padding=True,
             return_tensors="pt",
         ).to(self.device)
+
+        generations_dict: dict[str, list[Generation]] = defaultdict(list)
+
         for i in range(total_batches):
             start_index = i * batch_size
             end_index = min((i + 1) * batch_size, len(prompts))
@@ -145,14 +146,12 @@ class HuggingFaceLLM(LLM):
                         logits = outputs.logits
                     else:
                         logits = torch.cat((logits, outputs.logits), dim=0)
-                generations.append(
-                    [
-                        Generation(text="", generation_info={"logits": logits})
-                        for logits in logits
-                    ]
-                )
+                generations: list[Generation] = [
+                    Generation(text="", generation_info={"logits": logits})
+                    for logits in logits
+                ]
             else:
-                input_ids_len = batched_prompts["input_ids"].shape[1]
+                input_ids_len: int = batched_prompts["input_ids"].shape[1]
                 with torch.inference_mode():
                     tokens = self.model.generate(
                         **batched_prompts,
@@ -162,14 +161,16 @@ class HuggingFaceLLM(LLM):
                         max_new_tokens=self.config.gen_max_len,
                         top_p=self.config.top_p,
                         pad_token_id=self.tokenizer.pad_token_id,
-                        # **kwargs,
                     )
                     texts: list[str] = self.tokenizer.batch_decode(
                         tokens[:, input_ids_len:, ...]
                     )
-                # TODO: nested list for each different input?
-                generations.append([Generation(text=text) for text in texts])
-        return LLMResult(generations=generations)
+                generations = [Generation(text=text) for text in texts]
+            # Index generations by prompt
+            for prompt, generation in zip(prompts[start_index:end_index], generations):
+                generations_dict[prompt].append(generation)
+
+        return LLMResult(generations=list(generations_dict.values()))
 
 
 def get_model(config: ModelConfig):

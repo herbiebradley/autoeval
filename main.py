@@ -17,7 +17,6 @@ def main(config):
     print("----------------- Config ---------------")
     print(OmegaConf.to_yaml(config.dict()))
     print("-----------------  End -----------------")
-    print(config)
     persona = PersonaStatement(
         input_variables=["entity", "description", "preamble"],
         instruct=False,

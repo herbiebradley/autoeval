@@ -1,7 +1,9 @@
 from typing import Optional
 from pydantic import BaseModel
+from dataclasses import dataclass
 
 
+# @dataclass
 class ModelConfig(BaseModel):
     fp16: bool
     cuda: bool
@@ -9,7 +11,6 @@ class ModelConfig(BaseModel):
     seed: Optional[int]
     deterministic: bool
     # Sampling parameters
-    do_sample: bool = True
     num_return_sequences: int
     top_p: float
     temperature: float
@@ -21,3 +22,4 @@ class ModelConfig(BaseModel):
     preamble: str
     entity: str
     logits_only: bool
+    do_sample: bool = True
